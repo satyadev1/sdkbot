@@ -5,7 +5,7 @@ exports.up = (pgm) => {
     title: { type: 'text', notNull: true },
     state: { type: 'text', notNull: true, default: 'open', check: "state in ('open','done','dismissed')" },
     due_at: { type: 'timestamptz', notNull: true },
-    next_notification_at: { type: 'timestamptz', notNull: true },
+    next_notification_at: { type: 'timestamptz', notNull: false },
     escalation_stage: {
       type: 'text',
       notNull: true,
