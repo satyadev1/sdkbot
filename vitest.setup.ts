@@ -1,4 +1,4 @@
-// Ensure DATABASE_URL is set for tests
+// Validate DATABASE_URL is set for tests (see .env.example)
 if (!process.env.DATABASE_URL) {
-  process.env.DATABASE_URL = 'postgres://focuspilot:focuspilot@localhost:5432/focuspilot';
+  throw new Error('DATABASE_URL must be set (see .env.example) before running tests');
 }
