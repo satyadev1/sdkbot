@@ -1,16 +1,15 @@
 services:
   db:
-    image: postgres:16
+    image: postgres:16-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: focuspilot
       POSTGRES_PASSWORD: focuspilot
       POSTGRES_DB: focuspilot
     ports:
-      - "5433:5432"
+      - "5432:5432"
     volumes:
       - focuspilot_db_data:/var/lib/postgresql/data
-      - ./docker-init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U focuspilot"]
       interval: 5s
