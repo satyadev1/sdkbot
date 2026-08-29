@@ -17,7 +17,8 @@
     "migrate:down": "tsx src/db/migrate.ts down",
     "notify": "tsx src/scripts/notify.ts",
     "bridge": "tsx src/scripts/bridge.ts",
-    "wait-answer": "tsx src/scripts/waitForAnswer.ts"
+    "wait-answer": "tsx src/scripts/waitForAnswer.ts",
+    "watch-cursor": "tsx src/scripts/watchCursor.ts"
   },
   "dependencies": {
     "@slack/socket-mode": "^3.0.1",

@@ -52,6 +52,27 @@ export class SlackAnswersRepository {
     return toAnswer(row);
   }
 
+  /**
+   * Inserts a question keyed by `dedupeKey`, returning null when that key was
+   * already recorded. Used by the Cursor question watcher, which re-reads the
+   * same pending question on every poll and must post it only once.
+   */
+  async createIfNew(input: {
+    sessionId: string;
+    question: string;
+    dedupeKey: string;
+  }): Promise<SlackAnswer | null> {
+    const result = await this.pool.query<Row>(
+      `insert into slack_answers (session_id, question, dedupe_key)
+       values ($1, $2, $3)
+       on conflict (dedupe_key) where dedupe_key is not null do nothing
+       returning *`,
+      [input.sessionId, input.question, input.dedupeKey],
+    );
+    const row = result.rows[0];
+    return row ? toAnswer(row) : null;
+  }
+
   async setThreadTs(id: string, threadTs: string): Promise<void> {
     await this.pool.query('update slack_answers set thread_ts = $2 where id = $1', [id, threadTs]);
   }
