@@ -77,16 +77,48 @@ export class SlackAnswersRepository {
     await this.pool.query('update slack_answers set thread_ts = $2 where id = $1', [id, threadTs]);
   }
 
-  async recordAnswer(threadTs: string, answer: string): Promise<SlackAnswer | null> {
-    const result = await this.pool.query<Row>(
+  /**
+   * Records a reply against a pending question.
+   *
+   * `resolve` may rewrite the reply using the question it answers — used to
+   * turn a terse `1` into the option label it refers to. It is applied inside
+   * the UPDATE via a subquery on the same row, so the resolved value is written
+   * in one statement.
+   */
+  async recordAnswer(
+    threadTs: string,
+    answer: string,
+    resolve?: (question: string | null, reply: string) => string,
+  ): Promise<SlackAnswer | null> {
+    if (!resolve) {
+      const result = await this.pool.query<Row>(
+        `update slack_answers
+         set answer = $2, status = 'answered', answered_at = now()
+         where thread_ts = $1 and status = 'pending'
+         returning *`,
+        [threadTs, answer],
+      );
+      const row = result.rows[0];
+      return row ? toAnswer(row) : null;
+    }
+
+    // Read the question and claim the row in one statement, so a concurrent
+    // reply cannot also claim it; then store the resolved label.
+    const claimed = await this.pool.query<Row>(
       `update slack_answers
-       set answer = $2, status = 'answered', answered_at = now()
+       set status = 'answered', answered_at = now()
        where thread_ts = $1 and status = 'pending'
        returning *`,
-      [threadTs, answer],
+      [threadTs],
     );
-    const row = result.rows[0];
-    return row ? toAnswer(row) : null;
+    const row = claimed.rows[0];
+    if (!row) return null;
+
+    const result = await this.pool.query<Row>(
+      'update slack_answers set answer = $2 where id = $1 returning *',
+      [row.id, resolve(row.question, answer)],
+    );
+    return toAnswer(result.rows[0] ?? row);
   }
 
   async findLatestForSession(sessionId: string): Promise<SlackAnswer | null> {

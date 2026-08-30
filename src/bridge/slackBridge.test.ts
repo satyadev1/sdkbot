@@ -17,17 +17,30 @@ const { startSlackBridge } = await import('./slackBridge.js');
 
 type Post = { channel: string; text: string; threadTs?: string };
 
-function harness(opts: { answer?: string | null; botToken?: string; postThrows?: boolean } = {}) {
+function harness(
+  opts: {
+    answer?: string | null;
+    botToken?: string;
+    postThrows?: boolean;
+    question?: string;
+  } = {},
+) {
   const posts: Post[] = [];
   const logs: string[] = [];
   const recorded: Array<{ threadTs: string; answer: string }> = [];
 
   const repo = {
-    recordAnswer: async (threadTs: string, answer: string) => {
+    // Mirrors the real signature: the bridge passes a resolver, which the
+    // repository applies against the stored question text.
+    recordAnswer: async (
+      threadTs: string,
+      answer: string,
+      resolve?: (question: string | null, reply: string) => string,
+    ) => {
       recorded.push({ threadTs, answer });
-      return opts.answer === null
-        ? null
-        : { sessionId: 'sess-1', answer: opts.answer ?? answer };
+      if (opts.answer === null) return null;
+      const stored = opts.answer ?? (resolve ? resolve(opts.question ?? null, answer) : answer);
+      return { sessionId: 'sess-1', answer: stored };
     },
   } as never;
 
@@ -65,6 +78,27 @@ describe('startSlackBridge', () => {
     expect(posts[0]).toMatchObject({ channel: 'C1', threadTs: '111.222' });
     expect(posts[0]?.text).toContain('recorded');
     expect(posts[0]?.text).toContain('1');
+  });
+
+  it('shows both the reply and the option it resolved to', async () => {
+    const { send, posts } = harness({
+      botToken: 'xoxb',
+      question: 'Q: Push? (options: Push both, Hold)',
+    });
+    await send(reply({ text: '1' }));
+
+    // Both halves matter: the digit you sent, and what it was taken to mean.
+    expect(posts[0]?.text).toContain('`1`');
+    expect(posts[0]?.text).toContain('Push both');
+  });
+
+  it('does not add an arrow when the reply needed no resolving', async () => {
+    const { send, posts } = harness({
+      botToken: 'xoxb',
+      question: 'Q: Push? (options: Push both, Hold)',
+    });
+    await send(reply({ text: 'something else entirely' }));
+    expect(posts[0]?.text).not.toContain('→');
   });
 
   it('ignores its own acknowledgement so it cannot loop', async () => {

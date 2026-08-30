@@ -1,6 +1,7 @@
 import { SocketModeClient } from '@slack/socket-mode';
 import type { SlackAnswersRepository } from '../db/slackAnswersRepository.js';
 import { postSlackMessage } from '../slack/postMessage.js';
+import { resolveAnswer } from '../slack/resolveAnswer.js';
 
 type SlackMessageEvent = {
   type: string;
@@ -33,10 +34,23 @@ export type BridgeDeps = {
  * and nothing in Slack changes, so there is no way to tell a recorded answer
  * from one the bridge never saw.
  */
-function ackText(answer: string): string {
-  const trimmed = answer.trim();
-  const shown = trimmed.length > 80 ? `${trimmed.slice(0, 79)}…` : trimmed;
-  return `:white_check_mark: recorded: \`${shown}\``;
+function clip(value: string, max = 80): string {
+  const trimmed = value.trim();
+  return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
+}
+
+/**
+ * Shows what was stored, and — when a terse reply picked an option — what that
+ * reply was taken to mean, so a mis-resolved `1` is caught immediately rather
+ * than acted on silently.
+ */
+function ackText(reply: string, stored: string): string {
+  const shown = clip(reply);
+  const resolved = clip(stored);
+  // Compare after clipping: a long reply stored verbatim is the same answer,
+  // so it should not render as though it resolved to something else.
+  if (resolved === shown) return `:white_check_mark: recorded: \`${shown}\``;
+  return `:white_check_mark: recorded: \`${shown}\` → *${resolved}*`;
 }
 
 export function startSlackBridge(
@@ -54,13 +68,17 @@ export function startSlackBridge(
     if (event.bot_id || event.subtype || !event.thread_ts || !event.text) {
       return;
     }
-    const answered = await repo.recordAnswer(event.thread_ts, event.text);
+    const answered = await repo.recordAnswer(
+      event.thread_ts,
+      event.text,
+      (question, reply) => resolveAnswer(question, reply).value,
+    );
     if (!answered) return;
     log(`Recorded answer for session ${answered.sessionId}: ${answered.answer}`);
 
     if (!deps.botToken || !event.channel) return;
     try {
-      await post(deps.botToken, event.channel, ackText(event.text), {
+      await post(deps.botToken, event.channel, ackText(event.text, answered.answer ?? event.text), {
         threadTs: event.thread_ts,
       });
     } catch (err) {
