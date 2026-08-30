@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { MentionConfig } from '../slack/mention.js';
 import type { PendingQuestion } from './chatStore.js';
 import { startCursorWatcher } from './watcher.js';
 
@@ -12,7 +13,7 @@ const question = (overrides: Partial<PendingQuestion> = {}): PendingQuestion => 
 });
 
 /** Harness with a controllable pending-question feed and a fake repo. */
-function harness(feeds: PendingQuestion[][]) {
+function harness(feeds: PendingQuestion[][], mention?: MentionConfig) {
   const posts: string[] = [];
   const created: string[] = [];
   let call = 0;
@@ -30,6 +31,7 @@ function harness(feeds: PendingQuestion[][]) {
     botToken: 'token',
     channelId: 'C1',
     intervalMs: 5,
+    mention,
     resolveWorkspaceName: async () => 'my-project',
     postMessage: async (_t, _c, text) => {
       posts.push(text);
@@ -65,6 +67,37 @@ describe('startCursorWatcher', () => {
     expect(posts[0]).toContain('{CURSOR} `my-project` is waiting for your answer');
     expect(posts[0]).toContain('Q: Ship it? (options: Yes, No)');
     expect(posts[0]).toContain('Reply in this thread to answer.');
+  });
+
+  it('leads the post with a mention so Slack notifies in the preview', async () => {
+    const { watcher, posts } = harness([[], [question()]], {
+      userId: 'U9',
+      enabled: true,
+      scope: 'questions',
+    });
+    await settle();
+    watcher.stop();
+    expect(posts[0]?.startsWith('<@U9> :question:')).toBe(true);
+  });
+
+  it('omits the mention when tagging is disabled', async () => {
+    const { watcher, posts } = harness([[], [question()]], {
+      userId: 'U9',
+      enabled: false,
+      scope: 'questions',
+    });
+    await settle();
+    watcher.stop();
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).not.toContain('<@U9>');
+    expect(posts[0]?.startsWith(':question:')).toBe(true);
+  });
+
+  it('posts untagged when no mention is configured at all', async () => {
+    const { watcher, posts } = harness([[], [question()]]);
+    await settle();
+    watcher.stop();
+    expect(posts[0]).not.toContain('<@');
   });
 
   it('posts each question bubble only once while it stays pending', async () => {

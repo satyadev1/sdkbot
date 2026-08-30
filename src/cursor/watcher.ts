@@ -1,4 +1,5 @@
 import type { SlackAnswersRepository } from '../db/slackAnswersRepository.js';
+import { mentionPrefix, type MentionConfig } from '../slack/mention.js';
 import { postSlackMessage } from '../slack/postMessage.js';
 import { defaultChatDbPath, findPendingQuestions, type PendingQuestion } from './chatStore.js';
 import { createWorkspaceNameResolver } from './workspaceNames.js';
@@ -24,6 +25,8 @@ export type WatcherDeps = {
   intervalMs?: number;
   /** How many recently-active sessions to inspect per poll. */
   sessionLimit?: number;
+  /** Whether/how to @-mention on each question. Absent means never. */
+  mention?: MentionConfig;
   resolveWorkspaceName?: (workspaceId: string) => Promise<string>;
   postMessage?: (botToken: string, channelId: string, text: string) => Promise<string>;
   findPending?: (dbPath: string, sessionLimit: number) => Promise<PendingQuestion[]>;
@@ -78,8 +81,11 @@ export function startCursorWatcher(deps: WatcherDeps): CursorWatcher {
     if (!row) return;
 
     const time = new Date().toLocaleString();
+    // The mention leads the message so it shows in Slack's notification
+    // preview and channel list, not just once the post is expanded.
+    const tag = deps.mention ? mentionPrefix(deps.mention, 'question') : '';
     const text =
-      `:question: *{CURSOR} \`${project}\` is waiting for your answer* _at ${time}_\n` +
+      `${tag}:question: *{CURSOR} \`${project}\` is waiting for your answer* _at ${time}_\n` +
       `>${question.text}\n_Reply in this thread to answer._`;
     const ts = await post(deps.botToken, deps.channelId, text);
     await deps.repo.setThreadTs(row.id, ts);

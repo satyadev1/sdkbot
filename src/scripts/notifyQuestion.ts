@@ -1,6 +1,7 @@
 import { loadEnv } from '../config/env.js';
 import { getPool } from '../db/client.js';
 import { SlackAnswersRepository } from '../db/slackAnswersRepository.js';
+import { mentionConfigFromEnv, mentionPrefix } from '../slack/mention.js';
 import { postSlackMessage } from '../slack/postMessage.js';
 import { sendSlackNotification } from '../slack/notifier.js';
 
@@ -15,7 +16,8 @@ async function main() {
 
   const env = loadEnv();
   const time = new Date().toLocaleString();
-  const text = `:question: *${label} is waiting for your answer* _at ${time}_\n>${question}\n_Reply in this thread to answer._`;
+  const tag = mentionPrefix(mentionConfigFromEnv(env), 'question');
+  const text = `${tag}:question: *${label} is waiting for your answer* _at ${time}_\n>${question}\n_Reply in this thread to answer._`;
 
   if (!env.slackBotToken || !env.slackChannelId) {
     if (env.slackWebhookUrl) {

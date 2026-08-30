@@ -1,5 +1,17 @@
 import { z } from 'zod';
 
+/**
+ * Env vars are strings, so a bare `z.boolean()` would treat "false" as truthy.
+ * Accepts the usual spellings and rejects anything ambiguous outright.
+ */
+const booleanish = z
+  .string()
+  .transform((raw) => raw.trim().toLowerCase())
+  .refine((v) => v === '' || ['1', 'true', 'yes', 'on', '0', 'false', 'no', 'off'].includes(v), {
+    message: 'must be one of: true/false, 1/0, yes/no, on/off',
+  })
+  .transform((v) => (v === '' ? undefined : ['1', 'true', 'yes', 'on'].includes(v)));
+
 const schema = z.object({
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -7,7 +19,15 @@ const schema = z.object({
   SLACK_BOT_TOKEN: z.string().optional(),
   SLACK_APP_TOKEN: z.string().optional(),
   SLACK_CHANNEL_ID: z.string().optional(),
+  /** Slack member id (`U…`) to @-mention. Without it, nothing is tagged. */
+  SLACK_MENTION_USER_ID: z.string().optional(),
+  /** Master switch for @-mentions. Defaults to on when an id is set. */
+  SLACK_MENTION_ENABLED: booleanish.optional(),
+  /** `questions` tags only posts awaiting an answer; `all` tags every post. */
+  SLACK_MENTION_SCOPE: z.enum(['questions', 'all']).optional(),
 });
+
+export type MentionScope = 'questions' | 'all';
 
 export type AppEnv = {
   databaseUrl: string;
@@ -16,6 +36,9 @@ export type AppEnv = {
   slackBotToken?: string;
   slackAppToken?: string;
   slackChannelId?: string;
+  slackMentionUserId?: string;
+  slackMentionEnabled?: boolean;
+  slackMentionScope?: MentionScope;
 };
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
@@ -27,5 +50,8 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     slackBotToken: parsed.SLACK_BOT_TOKEN || undefined,
     slackAppToken: parsed.SLACK_APP_TOKEN || undefined,
     slackChannelId: parsed.SLACK_CHANNEL_ID || undefined,
+    slackMentionUserId: parsed.SLACK_MENTION_USER_ID || undefined,
+    slackMentionEnabled: parsed.SLACK_MENTION_ENABLED,
+    slackMentionScope: parsed.SLACK_MENTION_SCOPE,
   };
 }
