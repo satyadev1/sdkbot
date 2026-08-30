@@ -1,7 +1,13 @@
+export type PostOptions = {
+  /** Post as a reply inside this thread instead of at channel top level. */
+  threadTs?: string;
+};
+
 export async function postSlackMessage(
   botToken: string,
   channelId: string,
   text: string,
+  options: PostOptions = {},
 ): Promise<string> {
   const response = await fetch('https://slack.com/api/chat.postMessage', {
     method: 'POST',
@@ -9,7 +15,11 @@ export async function postSlackMessage(
       'Content-Type': 'application/json; charset=utf-8',
       Authorization: `Bearer ${botToken}`,
     },
-    body: JSON.stringify({ channel: channelId, text }),
+    body: JSON.stringify({
+      channel: channelId,
+      text,
+      ...(options.threadTs ? { thread_ts: options.threadTs } : {}),
+    }),
   });
   const body = (await response.json()) as { ok: boolean; ts?: string; error?: string };
   if (!response.ok || !body.ok || !body.ts) {

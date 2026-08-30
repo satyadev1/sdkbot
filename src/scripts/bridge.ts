@@ -11,7 +11,8 @@ if (!env.slackAppToken) {
 
 const pool = getPool();
 const repo = new SlackAnswersRepository(pool);
-const client = startSlackBridge(env.slackAppToken, repo);
+const client = startSlackBridge(env.slackAppToken, repo, { botToken: env.slackBotToken });
 
 await client.start();
-console.log('sdkbot Slack bridge connected (Socket Mode)');
+const acking = env.slackBotToken ? 'acking replies in-thread' : 'no bot token — replies recorded silently';
+console.log(`sdkbot Slack bridge connected (Socket Mode) — ${acking}`);
