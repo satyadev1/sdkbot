@@ -25,9 +25,20 @@ const schema = z.object({
   SLACK_MENTION_ENABLED: booleanish.optional(),
   /** `questions` tags only posts awaiting an answer; `all` tags every post. */
   SLACK_MENTION_SCOPE: z.enum(['questions', 'all']).optional(),
+  /**
+   * How a recorded answer reaches the waiting prompt. `clipboard` copies it
+   * for you to paste and needs no permission; `keystroke` pastes it itself and
+   * requires Accessibility access for osascript.
+   */
+  DELIVER_MODE: z.enum(['clipboard', 'keystroke']).optional(),
+  /** Bundle id that must be frontmost to deliver; any known terminal if unset. */
+  DELIVER_EXPECTED_APP: z.string().optional(),
+  /** Press Return after delivering. Off by default. */
+  DELIVER_SUBMIT: booleanish.optional(),
 });
 
 export type MentionScope = 'questions' | 'all';
+export type DeliverMode = 'clipboard' | 'keystroke';
 
 export type AppEnv = {
   databaseUrl: string;
@@ -39,6 +50,9 @@ export type AppEnv = {
   slackMentionUserId?: string;
   slackMentionEnabled?: boolean;
   slackMentionScope?: MentionScope;
+  deliverMode?: DeliverMode;
+  deliverExpectedApp?: string;
+  deliverSubmit?: boolean;
 };
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
@@ -53,5 +67,8 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     slackMentionUserId: parsed.SLACK_MENTION_USER_ID || undefined,
     slackMentionEnabled: parsed.SLACK_MENTION_ENABLED,
     slackMentionScope: parsed.SLACK_MENTION_SCOPE,
+    deliverMode: parsed.DELIVER_MODE,
+    deliverExpectedApp: parsed.DELIVER_EXPECTED_APP || undefined,
+    deliverSubmit: parsed.DELIVER_SUBMIT,
   };
 }
