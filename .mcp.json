@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "ask-slack": {
+      "type": "stdio",
+      "command": "scripts/run-ask-slack-mcp.sh",
+      "args": []
+    }
+  }
+}

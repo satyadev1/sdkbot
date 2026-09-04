@@ -17,11 +17,15 @@
     "migrate:down": "tsx src/db/migrate.ts down",
     "notify": "tsx src/scripts/notify.ts",
     "bridge": "tsx src/scripts/bridge.ts",
+    "telegram-bridge": "tsx src/scripts/telegramBridge.ts",
     "wait-answer": "tsx src/scripts/waitForAnswer.ts",
     "watch-cursor": "tsx src/scripts/watchCursor.ts",
-    "deliver-answer": "tsx src/scripts/deliverAnswer.ts"
+    "watch-cursor-telegram": "tsx src/scripts/watchCursorTelegram.ts",
+    "deliver-answer": "tsx src/scripts/deliverAnswer.ts",
+    "ask-slack-mcp": "tsx src/mcp/server.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@slack/socket-mode": "^3.0.1",
     "pg": "^8.13.1",
     "zod": "^3.24.1"

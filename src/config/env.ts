@@ -35,6 +35,9 @@ const schema = z.object({
   DELIVER_EXPECTED_APP: z.string().optional(),
   /** Press Return after delivering. Off by default. */
   DELIVER_SUBMIT: booleanish.optional(),
+  TELEGRAM_BOT_TOKEN: z.string().optional(),
+  /** Chat id to post questions to; captured from getUpdates after the user DMs the bot once. */
+  TELEGRAM_CHAT_ID: z.string().optional(),
 });
 
 export type MentionScope = 'questions' | 'all';
@@ -53,6 +56,8 @@ export type AppEnv = {
   deliverMode?: DeliverMode;
   deliverExpectedApp?: string;
   deliverSubmit?: boolean;
+  telegramBotToken?: string;
+  telegramChatId?: string;
 };
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
@@ -70,5 +75,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     deliverMode: parsed.DELIVER_MODE,
     deliverExpectedApp: parsed.DELIVER_EXPECTED_APP || undefined,
     deliverSubmit: parsed.DELIVER_SUBMIT,
+    telegramBotToken: parsed.TELEGRAM_BOT_TOKEN || undefined,
+    telegramChatId: parsed.TELEGRAM_CHAT_ID || undefined,
   };
 }

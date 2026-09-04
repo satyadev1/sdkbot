@@ -13,6 +13,6 @@ export async function getTestPool(): Promise<pg.Pool> {
 
 export async function truncateAll(p: pg.Pool): Promise<void> {
   await p.query(
-    'TRUNCATE TABLE reminder_deliveries, reminders, scheduled_jobs, slack_answers, users RESTART IDENTITY CASCADE',
+    'TRUNCATE TABLE reminder_deliveries, reminders, scheduled_jobs, slack_answers, telegram_answers, users RESTART IDENTITY CASCADE',
   );
 }
