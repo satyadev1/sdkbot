@@ -38,6 +38,16 @@ function clip(value: string, max = 80): string {
   return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
 }
 
+// `fetch()` network failures surface as the opaque message "fetch failed",
+// with the actual reason (ECONNRESET, ETIMEDOUT, DNS failure, etc.) only in
+// `err.cause`. Without this, the log can't distinguish a real network issue
+// from Telegram's 409 (which throws a different, already-descriptive Error).
+function describeError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const cause = err.cause instanceof Error ? err.cause.message : err.cause;
+  return cause ? `${err.message} (cause: ${cause})` : err.message;
+}
+
 async function defaultFetchUpdates(botToken: string, offset: number): Promise<TelegramUpdate[]> {
   const url = new URL(`https://api.telegram.org/bot${botToken}/getUpdates`);
   url.searchParams.set('timeout', '30');
@@ -75,7 +85,7 @@ export async function startTelegramBridge(
     } catch (err) {
       // A single network blip (DNS hiccup, connect timeout) must not kill a
       // long-running bridge process — log and retry after a short backoff.
-      log(`getUpdates failed, retrying: ${err instanceof Error ? err.message : err}`);
+      log(`getUpdates failed, retrying: ${describeError(err)}`);
       await sleepFn(RETRY_DELAY_MS);
       continue;
     }
@@ -98,7 +108,7 @@ export async function startTelegramBridge(
         );
       } catch (err) {
         // The answer is already stored; a failed ack must not lose it.
-        log(`ack failed for ${answered.sessionId}: ${err instanceof Error ? err.message : err}`);
+        log(`ack failed for ${answered.sessionId}: ${describeError(err)}`);
       }
     }
   }

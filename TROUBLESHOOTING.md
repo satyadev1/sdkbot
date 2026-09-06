@@ -90,18 +90,27 @@ The bridge's own retry loop (5s backoff, `src/telegram/bridge.ts`) cannot
 fix this by itself — it keeps retrying against the same stuck lock
 indefinitely; this can and did persist for days.
 
-**Diagnose:**
+**⚠️ Do NOT diagnose with a manual `getUpdates` call while the bridge is
+running.** This was the actual root cause behind repeated "it's always
+failing" reports: `getUpdates` enforces a single active long-poll per bot
+token, so a diagnostic `curl`/script call — made specifically to check
+whether the bridge is stuck — knocks the real, healthy bridge process
+offline and forces it into its own 409 retry loop. Confirmed by direct
+reproduction: a standalone Node script hitting `getUpdates` 5 times
+immediately produced a fresh `Conflict: terminated by other getUpdates
+request` loop in the live bridge's log. Left completely alone (no external
+`getUpdates` calls from anywhere), the bridge holds a stable connection
+indefinitely.
+
+**Diagnose safely** — use endpoints that don't touch the long-poll lock:
 ```bash
 set -a; source .env; set +a
-curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?timeout=1&offset=0"
+curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe"          # token/network sanity, safe
+curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo" # safe; non-empty url also breaks getUpdates (mutually exclusive) — clear with deleteWebhook if so
+tail -f ~/Library/Logs/sdkbot-telegrambridge.log                          # passive; watch, don't poll getUpdates yourself
 ```
-A `409` confirms this exact issue. `{"ok":true,...}` means it's something
-else — check for a webhook instead:
-```bash
-curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo"
-```
-A non-empty `url` also causes `getUpdates` to fail (webhook and polling are
-mutually exclusive) — clear it with `deleteWebhook` if so.
+Only call `getUpdates` directly as a last resort when the bridge is
+confirmed stopped (`launchctl unload` first) — never while it's running.
 
 **Fix:**
 1. Stop the bridge and confirm nothing else is running against the same
@@ -115,9 +124,17 @@ mutually exclusive) — clear it with `deleteWebhook` if so.
 3. Verify the lock cleared: rerun the manual `getUpdates` curl above —
    expect `{"ok":true,"result":[]}`.
 4. Reload: `launchctl load ~/Library/LaunchAgents/com.sdkbot.telegrambridge.plist`
-5. Confirm: log should show `sdkbot Telegram bridge connected
-   (long-polling)` with no further `getUpdates failed` lines. Watch for
-   ~30-60s to be sure it's not immediately re-conflicting.
+5. Confirm via passive `tail -f` only (see warning above — do not run your
+   own `getUpdates` call here). Log should show `sdkbot Telegram bridge
+   connected (long-polling)` with no further `getUpdates failed` lines.
+   Watch for at least 2-5 minutes to be sure.
+
+**Note on log detail:** `src/telegram/bridge.ts` logs `err.cause` alongside
+`err.message` (via `describeError()`), so a genuine network-level `fetch
+failed` (DNS, ECONNRESET, timeout) now shows its real cause directly in the
+log instead of just the opaque string `fetch failed`. If you see bare
+`fetch failed` with no `(cause: ...)` suffix on a version after this fix,
+something is stripping the cause — check the Node/undici version.
 
 ## Issue: duplicate/unmanaged process holding a bot token
 
