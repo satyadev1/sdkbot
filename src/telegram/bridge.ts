@@ -32,6 +32,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 const RETRY_DELAY_MS = 5000;
+const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
 
 function clip(value: string, max = 80): string {
   const trimmed = value.trim();
@@ -48,11 +49,21 @@ function describeError(err: unknown): string {
   return cause ? `${err.message} (cause: ${cause})` : err.message;
 }
 
+// Long-poll asks Telegram to hold the request open for 30s, so anything past
+// that plus slack is a dead connection. Without this the process can hang in
+// fetch() forever (observed: 4h of silence, no socket, 0% CPU) — and because
+// it stays "alive", launchd's KeepAlive never restarts it.
+const POLL_TIMEOUT_SECONDS = 30;
+const REQUEST_TIMEOUT_MS = (POLL_TIMEOUT_SECONDS + 15) * 1000;
+
 async function defaultFetchUpdates(botToken: string, offset: number): Promise<TelegramUpdate[]> {
   const url = new URL(`https://api.telegram.org/bot${botToken}/getUpdates`);
-  url.searchParams.set('timeout', '30');
+  url.searchParams.set('timeout', String(POLL_TIMEOUT_SECONDS));
   url.searchParams.set('offset', String(offset));
-  const response = await fetch(url, { method: 'GET' });
+  const response = await fetch(url, {
+    method: 'GET',
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
   const body = (await response.json()) as { ok: boolean; result?: TelegramUpdate[]; description?: string };
   if (!response.ok || !body.ok) {
     throw new Error(`Telegram getUpdates failed: ${body.description ?? response.status}`);
@@ -78,7 +89,15 @@ export async function startTelegramBridge(
   const sleepFn = deps.sleep ?? sleep;
 
   let offset = 0;
+  // A healthy idle bridge and a hung one are both silent, so emit a periodic
+  // heartbeat: a stale log mtime is then unambiguous proof of a hang, which is
+  // what the watchdog checks.
+  let lastHeartbeat = 0;
   while (!shouldStop()) {
+    if (Date.now() - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
+      log(`heartbeat: polling (offset ${offset})`);
+      lastHeartbeat = Date.now();
+    }
     let updates: TelegramUpdate[];
     try {
       updates = await fetchUpdates(botToken, offset);

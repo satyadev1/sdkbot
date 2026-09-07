@@ -11,16 +11,38 @@ integrations. For Slack-specific day-to-day ops, see `RUNBOOK.md`.
 launchctl list | grep sdkbot
 ```
 
-Every row should show exit status `0` in the second column. All four
+Every row should show exit status `0` in the second column. All five
 services should be present:
 
 - `com.sdkbot.slackbridge`
 - `com.sdkbot.telegrambridge`
 - `com.sdkbot.cursorwatcher`
 - `com.sdkbot.cursorwatcher.telegram`
+- `com.sdkbot.watchdog` — self-heal; see below
 
 If a label is missing entirely, it's not loaded — see "Service isn't
 loaded at all" below.
+
+**Check the watchdog first.** `com.sdkbot.watchdog` runs every 300s and
+already auto-heals the three most common failures (hung bridge, stopped
+Postgres container, service missing from launchctl), alerting to Telegram
+and Slack whenever it acts.
+
+Every alert ends with a **"What you should do"** section — read that first.
+Most alerts are *already healed* and say "Nothing"; only the ones that say
+"Needs you" require action, and they include the exact commands to run. So
+an alert arriving is not by itself a reason to intervene.
+
+It is silent when healthy, so its log is the fastest way to see whether
+something already broke and was fixed:
+
+```bash
+tail -30 ~/Library/Logs/sdkbot-watchdog.log
+```
+
+If the DB is down, note `sdkbot-db-1`'s `restart: unless-stopped` does
+**not** survive the Docker daemon itself restarting — that's what the
+watchdog's `docker start` check exists for.
 
 ```bash
 tail -30 ~/Library/Logs/sdkbot-<service>.log
@@ -74,33 +96,60 @@ retrying: fetch failed` in a tight loop and never logs a successful
 `api.telegram.org` from the same machine succeed fine — the failure is
 specific to the bridge's long-poll session, not general connectivity.
 
-**Cause:** Telegram's Bot API allows only **one** active `getUpdates`
-long-poll per bot token. If a previous bridge process was killed
-ungracefully (plain `kill`/`SIGKILL` while a 30s long-poll was in flight,
-a crash, a `launchctl unload` that didn't let it exit cleanly), Telegram's
-server can keep that dead session "active" for a while. Every subsequent
-call — including from a freshly restarted, perfectly healthy process —
-gets rejected:
+**Cause (confirmed root cause of the recurring "Telegram is always
+failing" reports): a silent `fetch()` hang, not a crash.** Intermittent
+network/DNS failures can prevent resolution of `api.telegram.org` and
+drop idle 30s long-poll connections — the log showed hundreds of
+`getaddrinfo ENOTFOUND api.telegram.org`. Node's `fetch()`
+had **no timeout**, so when a connection was dropped mid-flight the call
+could block forever. Observed end state: the process alive for 21h at 0%
+CPU, **no open socket**, and **no log output for 4+ hours**.
+
+The reason this went undetected for days is that `launchd`'s `KeepAlive`
+only restarts processes that have *died*. A process that is hung but
+still alive looks perfectly healthy to it, so nothing ever restarted it,
+and the bridge silently stopped receiving replies while appearing to run.
+
+Three changes in `src/telegram/bridge.ts` + `scripts/watchdog.sh` address
+this:
+- `AbortSignal.timeout()` (`POLL_TIMEOUT_SECONDS` 30 + 15s slack = 45s)
+  so a dead connection now throws instead of hanging forever.
+- A heartbeat line every 5 minutes, so a healthy-but-idle bridge and a
+  hung one are distinguishable — a stale log mtime is now unambiguous
+  proof of a hang.
+- `scripts/watchdog.sh` (launchd `com.sdkbot.watchdog`, every 300s) reads
+  that heartbeat and restarts the bridge if it goes stale for >15m,
+  alerting to both Telegram and Slack. This has since caught and healed a
+  real hang unattended.
+
+So a bare `fetch failed` loop that never recovers is a **network/DNS**
+problem (check `err.cause`, see the log-detail note below), and total
+silence with no heartbeat is a **hang** — the watchdog should now fix the
+latter on its own within ~5 minutes.
+
+**Secondary cause — 409 `Conflict` (a different failure, don't confuse
+them):** Telegram's Bot API allows only **one** active `getUpdates`
+long-poll per bot token. A second caller against the same token — a
+duplicate process, or an ungracefully killed predecessor whose session
+Telegram still considers active — gets:
 
 ```json
 {"ok":false,"error_code":409,"description":"Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
 ```
 
-The bridge's own retry loop (5s backoff, `src/telegram/bridge.ts`) cannot
-fix this by itself — it keeps retrying against the same stuck lock
-indefinitely; this can and did persist for days.
+Unlike the hang, this one is loud: the log fills continuously rather than
+going quiet. The retry loop cannot clear it on its own.
 
 **⚠️ Do NOT diagnose with a manual `getUpdates` call while the bridge is
-running.** This was the actual root cause behind repeated "it's always
-failing" reports: `getUpdates` enforces a single active long-poll per bot
-token, so a diagnostic `curl`/script call — made specifically to check
-whether the bridge is stuck — knocks the real, healthy bridge process
-offline and forces it into its own 409 retry loop. Confirmed by direct
-reproduction: a standalone Node script hitting `getUpdates` 5 times
-immediately produced a fresh `Conflict: terminated by other getUpdates
-request` loop in the live bridge's log. Left completely alone (no external
-`getUpdates` calls from anywhere), the bridge holds a stable connection
-indefinitely.
+running.** Because of that single-session limit, a diagnostic
+`curl`/script call — made specifically to check whether the bridge is
+stuck — knocks the real, healthy bridge offline and forces it into its own
+409 retry loop, i.e. the check *creates* the failure it was meant to
+detect. Confirmed by direct reproduction: a standalone Node script hitting
+`getUpdates` 5 times immediately produced a fresh `Conflict: terminated by
+other getUpdates request` loop in the live bridge's log. Note this is a
+self-inflicted diagnostic hazard, **not** the cause of the original
+outage — that was the hang above.
 
 **Diagnose safely** — use endpoints that don't touch the long-poll lock:
 ```bash
@@ -112,7 +161,17 @@ tail -f ~/Library/Logs/sdkbot-telegrambridge.log                          # pass
 Only call `getUpdates` directly as a last resort when the bridge is
 confirmed stopped (`launchctl unload` first) — never while it's running.
 
-**Fix:**
+**Fix — if it's a hang** (no output at all, no recent `heartbeat:` line):
+first just wait ~5 minutes; `com.sdkbot.watchdog` polls every 300s and
+should restart it and alert you. Confirm it did:
+```bash
+tail -20 ~/Library/Logs/sdkbot-watchdog.log      # look for "heartbeat stale ... reloading"
+launchctl list | awk '$3 == "com.sdkbot.watchdog"'   # must be present, else load the plist
+```
+If the watchdog itself isn't loaded or didn't act, reload the bridge by
+hand with the steps below.
+
+**Fix — if it's a 409 `Conflict` loop:**
 1. Stop the bridge and confirm nothing else is running against the same
    token (see "duplicate process" issue below — that's the usual second
    cause of a stuck lock):

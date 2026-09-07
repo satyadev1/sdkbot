@@ -35,7 +35,7 @@ export async function askTelegram(
   }
 
   const text =
-    `🤖 <b>Claude Code question</b>\n` +
+    `🟠 <b>Claude Code question</b>\n` +
     `<code>${escapeHtml(sessionId)}</code>\n\n` +
     `${escapeHtml(question)}\n\n` +
     `Reply to this message to answer.`;
