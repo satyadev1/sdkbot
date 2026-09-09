@@ -10,6 +10,10 @@ type SlackMessageEvent = {
   thread_ts?: string;
   bot_id?: string;
   channel?: string;
+  /** Slack member id of the sender; absent on bot posts. */
+  user?: string;
+  /** This message's own ts, used to thread a reply under it. */
+  ts?: string;
 };
 
 export type BridgeDeps = {
@@ -25,7 +29,24 @@ export type BridgeDeps = {
     options?: { threadTs?: string },
   ) => Promise<string>;
   log?: (message: string) => void;
+  /**
+   * Inbound commands: a top-level message that @-mentions the bot is run as a
+   * Claude prompt and answered in-thread. Both fields are required to enable
+   * it, so the path stays off until deliberately configured.
+   */
+  command?: {
+    /** Bot's own member id (`U…`); a message must mention it to be a command. */
+    botUserId: string;
+    /** Only this member id may issue commands. */
+    allowedUserId: string;
+    run: (prompt: string) => Promise<{ ok: true; result: string } | { ok: false; error: string }>;
+  };
 };
+
+/** Strips every `<@U…>` mention, leaving the actual instruction text. */
+function stripMentions(text: string): string {
+  return text.replace(/<@[A-Z0-9]+>/g, ' ').replace(/\s+/g, ' ').trim();
+}
 
 /**
  * Confirms in-thread that a reply was stored.
@@ -62,10 +83,73 @@ export function startSlackBridge(
   const post = deps.postMessage ?? postSlackMessage;
   const log = deps.log ?? ((message: string) => console.log(message));
 
+  /**
+   * Handles a top-level channel message: runs it as a Claude prompt when it
+   * mentions the bot and comes from the allowed user.
+   *
+   * Unmentioned chatter is logged but not answered — the bot shares the channel
+   * with ordinary conversation and must not reply to all of it.
+   */
+  async function handleCommand(event: SlackMessageEvent): Promise<void> {
+    const cmd = deps.command;
+    const text = event.text ?? '';
+    if (!cmd) {
+      log(`ignored top-level message (commands not configured): ${clip(text)}`);
+      return;
+    }
+    if (!text.includes(`<@${cmd.botUserId}>`)) {
+      log(`ignored top-level message (no mention): ${clip(text)}`);
+      return;
+    }
+    // Authorisation before anything is executed: this is the only thing standing
+    // between a channel member and a process on this machine.
+    if (event.user !== cmd.allowedUserId) {
+      log(`refused command from ${event.user ?? 'unknown'}: ${clip(text)}`);
+      await reply(event, ':no_entry: Not authorised to send commands.');
+      return;
+    }
+    const prompt = stripMentions(text);
+    if (!prompt) {
+      await reply(event, 'Mention me with an instruction, e.g. `@sdk what does runClaude do?`');
+      return;
+    }
+
+    log(`command from ${event.user}: ${clip(prompt)}`);
+    // A turn takes several seconds; without this the channel looks dead.
+    await reply(event, ':hourglass_flowing_sand: working…');
+    const outcome = await cmd.run(prompt);
+    if (outcome.ok) {
+      log(`command completed: ${clip(prompt)}`);
+      await reply(event, outcome.result);
+    } else {
+      log(`command failed: ${clip(prompt)} — ${outcome.error}`);
+      await reply(event, `:warning: failed: ${outcome.error}`);
+    }
+  }
+
+  /** Posts under the triggering message; never throws. */
+  async function reply(event: SlackMessageEvent, text: string): Promise<void> {
+    if (!deps.botToken || !event.channel) return;
+    try {
+      await post(deps.botToken, event.channel, text, { threadTs: event.ts });
+    } catch (err) {
+      log(`reply failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
   client.on('message', async ({ event, ack }: { event: SlackMessageEvent; ack: () => Promise<void> }) => {
     await ack();
     // `bot_id` also filters our own acknowledgement, so it cannot feed back in.
-    if (event.bot_id || event.subtype || !event.thread_ts || !event.text) {
+    // Both bot identities that post here (bot token and incoming webhook) carry
+    // one, so neither can trigger a command.
+    if (event.bot_id || event.subtype || !event.text) {
+      return;
+    }
+    // A top-level message is never an answer to a question — answers arrive as
+    // thread replies. Previously these were dropped without a trace; now they
+    // route to the command path, which at minimum logs them.
+    if (!event.thread_ts) {
+      await handleCommand(event);
       return;
     }
     const answered = await repo.recordAnswer(

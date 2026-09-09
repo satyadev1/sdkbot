@@ -23,6 +23,16 @@ const schema = z.object({
   SLACK_MENTION_USER_ID: z.string().optional(),
   /** Master switch for @-mentions. Defaults to on when an id is set. */
   SLACK_MENTION_ENABLED: booleanish.optional(),
+  /**
+   * The bot's own member id (`U…`, from `auth.test`). Mentioning it in a
+   * top-level message is what marks that message as a command for Claude.
+   */
+  SLACK_BOT_USER_ID: z.string().optional(),
+  /**
+   * Dedicated session id for the Slack command bridge. Must NOT be a live
+   * session's id: resuming an active session writes into its transcript.
+   */
+  CLAUDE_BRIDGE_SESSION_ID: z.string().optional(),
   /** `questions` tags only posts awaiting an answer; `all` tags every post. */
   SLACK_MENTION_SCOPE: z.enum(['questions', 'all']).optional(),
   /**
@@ -52,6 +62,8 @@ export type AppEnv = {
   slackChannelId?: string;
   slackMentionUserId?: string;
   slackMentionEnabled?: boolean;
+  slackBotUserId?: string;
+  claudeBridgeSessionId?: string;
   slackMentionScope?: MentionScope;
   deliverMode?: DeliverMode;
   deliverExpectedApp?: string;
@@ -71,6 +83,8 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     slackChannelId: parsed.SLACK_CHANNEL_ID || undefined,
     slackMentionUserId: parsed.SLACK_MENTION_USER_ID || undefined,
     slackMentionEnabled: parsed.SLACK_MENTION_ENABLED,
+    slackBotUserId: parsed.SLACK_BOT_USER_ID || undefined,
+    claudeBridgeSessionId: parsed.CLAUDE_BRIDGE_SESSION_ID || undefined,
     slackMentionScope: parsed.SLACK_MENTION_SCOPE,
     deliverMode: parsed.DELIVER_MODE,
     deliverExpectedApp: parsed.DELIVER_EXPECTED_APP || undefined,

@@ -23,11 +23,15 @@ function harness(
     botToken?: string;
     postThrows?: boolean;
     question?: string;
+    /** Enables the inbound-command path. */
+    command?: boolean;
+    commandResult?: { ok: true; result: string } | { ok: false; error: string };
   } = {},
 ) {
   const posts: Post[] = [];
   const logs: string[] = [];
   const recorded: Array<{ threadTs: string; answer: string }> = [];
+  const prompts: string[] = [];
 
   const repo = {
     // Mirrors the real signature: the bridge passes a resolver, which the
@@ -52,12 +56,22 @@ function harness(
       return '999.000';
     },
     log: (m) => logs.push(m),
+    command: opts.command
+      ? {
+          botUserId: 'UBOT',
+          allowedUserId: 'UOWNER',
+          run: async (prompt) => {
+            prompts.push(prompt);
+            return opts.commandResult ?? { ok: true, result: '4' };
+          },
+        }
+      : undefined,
   });
 
   const send = (event: Record<string, unknown>) =>
     handlers.message?.({ event, ack: async () => {} });
 
-  return { send, posts, logs, recorded };
+  return { send, posts, logs, recorded, prompts };
 }
 
 const reply = (over: Record<string, unknown> = {}) => ({
@@ -108,7 +122,7 @@ describe('startSlackBridge', () => {
     expect(posts).toEqual([]);
   });
 
-  it('ignores top-level messages that are not thread replies', async () => {
+  it('never treats a top-level message as an answer', async () => {
     const { send, recorded } = harness({ botToken: 'xoxb' });
     await send(reply({ thread_ts: undefined }));
     expect(recorded).toEqual([]);
@@ -146,5 +160,90 @@ describe('startSlackBridge', () => {
     await send(reply({ text: 'x'.repeat(200) }));
     expect(posts[0]?.text.length).toBeLessThan(140);
     expect(posts[0]?.text).toContain('…');
+  });
+});
+
+/** A top-level channel message, i.e. a candidate command rather than an answer. */
+const command = (over: Record<string, unknown> = {}) => ({
+  type: 'message',
+  text: '<@UBOT> what is 2+2',
+  channel: 'C1',
+  ts: '333.444',
+  user: 'UOWNER',
+  ...over,
+});
+
+describe('startSlackBridge inbound commands', () => {
+  it('runs a mentioned command and answers under it', async () => {
+    const { send, posts, prompts } = harness({ botToken: 'xoxb', command: true });
+    await send(command());
+
+    expect(prompts).toEqual(['what is 2+2']); // mention stripped
+    // Threaded under the command's own ts, so it cannot be mistaken for an
+    // answer to an ask_slack question.
+    expect(posts.every((p) => p.threadTs === '333.444')).toBe(true);
+    expect(posts[0]?.text).toContain('working');
+    expect(posts.at(-1)?.text).toBe('4');
+  });
+
+  it('refuses a command from anyone but the allowed user', async () => {
+    const { send, posts, prompts, logs } = harness({ botToken: 'xoxb', command: true });
+    await send(command({ user: 'UINTRUDER' }));
+
+    expect(prompts).toEqual([]); // nothing executed
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.text).toContain('Not authorised');
+    expect(logs.some((l) => l.includes('refused command from UINTRUDER'))).toBe(true);
+  });
+
+  it('ignores a top-level message that does not mention the bot', async () => {
+    const { send, posts, prompts, logs } = harness({ botToken: 'xoxb', command: true });
+    await send(command({ text: 'just chatting with a colleague' }));
+
+    expect(prompts).toEqual([]);
+    expect(posts).toEqual([]); // stays quiet in a shared channel
+    expect(logs.some((l) => l.includes('no mention'))).toBe(true);
+  });
+
+  it('does not mistake a mention of someone else for a command', async () => {
+    const { send, prompts, posts } = harness({ botToken: 'xoxb', command: true });
+    await send(command({ text: '<@USOMEONE> can you look at this' }));
+    expect(prompts).toEqual([]);
+    expect(posts).toEqual([]);
+  });
+
+  it('asks for an instruction when mentioned with nothing else', async () => {
+    const { send, posts, prompts } = harness({ botToken: 'xoxb', command: true });
+    await send(command({ text: '<@UBOT>' }));
+
+    expect(prompts).toEqual([]);
+    expect(posts[0]?.text).toContain('Mention me with an instruction');
+  });
+
+  it('reports a failed run instead of going silent', async () => {
+    const { send, posts } = harness({
+      botToken: 'xoxb',
+      command: true,
+      commandResult: { ok: false, error: 'claude timed out' },
+    });
+    await send(command());
+    expect(posts.at(-1)?.text).toContain('claude timed out');
+  });
+
+  it('logs top-level messages instead of dropping them when commands are off', async () => {
+    const { send, posts, logs } = harness({ botToken: 'xoxb' });
+    await send(command());
+
+    expect(posts).toEqual([]);
+    // The old behaviour left no trace at all, which is what made this
+    // impossible to diagnose.
+    expect(logs.some((l) => l.includes('not configured'))).toBe(true);
+  });
+
+  it('still ignores bot posts on the command path, so it cannot answer itself', async () => {
+    const { send, prompts, posts } = harness({ botToken: 'xoxb', command: true });
+    await send(command({ bot_id: 'B123', user: undefined }));
+    expect(prompts).toEqual([]);
+    expect(posts).toEqual([]);
   });
 });
