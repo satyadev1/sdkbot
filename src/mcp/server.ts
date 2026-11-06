@@ -7,6 +7,7 @@ import { SlackAnswersRepository } from '../db/slackAnswersRepository.js';
 import { TelegramAnswersRepository } from '../db/telegramAnswersRepository.js';
 import { askSlack } from './askSlack.js';
 import { askTelegram } from './askTelegram.js';
+import { notifySlack } from './notifySlack.js';
 
 /**
  * MCP server exposing `ask_slack` and `ask_telegram`: blocking tools that
@@ -71,6 +72,24 @@ export function createServer(): McpServer {
         };
       }
       return { content: [{ type: 'text', text: result.answer }] };
+    },
+  );
+
+  server.registerTool(
+    'notify_slack',
+    {
+      title: 'Send a notice to the private Slack channel',
+      description:
+        'Posts a one-way notice (e.g. "deployed", "build done") to the private notices channel ' +
+        'and returns immediately. Use ONLY when the user asked to be told about something; ' +
+        'never for questions (use ask_slack) or routine progress updates.',
+      inputSchema: {
+        message: z.string().min(1).describe('The notice text'),
+      },
+    },
+    async ({ message }) => {
+      await notifySlack(message, { env });
+      return { content: [{ type: 'text', text: 'Notice posted.' }] };
     },
   );
 

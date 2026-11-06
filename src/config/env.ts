@@ -19,6 +19,8 @@ const schema = z.object({
   SLACK_BOT_TOKEN: z.string().optional(),
   SLACK_APP_TOKEN: z.string().optional(),
   SLACK_CHANNEL_ID: z.string().optional(),
+  /** Private channel for non-actionable notices (finished, deployed, ...). */
+  SLACK_NOTICE_CHANNEL_ID: z.string().optional(),
   /** Slack member id (`U…`) to @-mention. Without it, nothing is tagged. */
   SLACK_MENTION_USER_ID: z.string().optional(),
   /** Master switch for @-mentions. Defaults to on when an id is set. */
@@ -60,6 +62,7 @@ export type AppEnv = {
   slackBotToken?: string;
   slackAppToken?: string;
   slackChannelId?: string;
+  slackNoticeChannelId?: string;
   slackMentionUserId?: string;
   slackMentionEnabled?: boolean;
   slackBotUserId?: string;
@@ -81,6 +84,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     slackBotToken: parsed.SLACK_BOT_TOKEN || undefined,
     slackAppToken: parsed.SLACK_APP_TOKEN || undefined,
     slackChannelId: parsed.SLACK_CHANNEL_ID || undefined,
+    slackNoticeChannelId: parsed.SLACK_NOTICE_CHANNEL_ID || undefined,
     slackMentionUserId: parsed.SLACK_MENTION_USER_ID || undefined,
     slackMentionEnabled: parsed.SLACK_MENTION_ENABLED,
     slackBotUserId: parsed.SLACK_BOT_USER_ID || undefined,
